@@ -20,7 +20,10 @@
   },
   "homepage": "https://github.com/ZENZO-Ecosystem/forge-validator#readme",
   "dependencies": {
+    "bitcoin-rpc-promise": "^2.1.6",
     "express": "^4.17.1",
-    "superagent": "^5.1.0"
+    "nanoid": "^2.1.7",
+    "superagent": "^5.1.0",
+    "x11-hash-js": "^1.0.1"
   }
 }

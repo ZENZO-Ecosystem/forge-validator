@@ -1,10 +1,18 @@
 const superagent = require('superagent');
 const express = require('express');
 const bodyParser = require('body-parser');
+const RPC = require('bitcoin-rpc-promise');
+const nanoid = require('nanoid');
+const x11 = require('x11-hash-js');
 
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
 let peers = [];
+
+// The list of all known items on the Forge network
+let items = [];
+
+let itemsToValidate = [];
 
 // Get a peer object from our list by it's host or index
 function getPeer (peerArg) {
@@ -25,9 +33,99 @@ function updatePeer (peerArg) {
     return false;
 }
 
+
+const authToken = nanoid();
+console.info("PRIVATE: Your local auth token is '" +  authToken + "'");
+
+// Checks if a private HTTP request was authenticated
+function isAuthed (req) {
+    if (req.body.auth === authToken) return true;
+    return false;
+}
+
+async function asyncForEach(array, callback) {
+    for (let index = 0; index < array.length; index++) {
+      await callback(array[index], index, array);
+    }
+}
+
+// Validates if an item is genuine
+async function isItemValid (nItem) {
+    let rawTx = await zenzo.call("getrawtransaction", nItem.tx, 1);
+    if (!rawTx || !rawTx.vout || !rawTx.vout[0]) {
+        console.warn('Forge: Item "' + nItem.name + '" is not in the blockchain.');
+        return false;
+    }
+    for (let i=0; i<rawTx.vout.length; i++) {
+        if (rawTx.vout[i].value === nItem.value) {
+            if (rawTx.vout[i].scriptPubKey.addresses.includes(nItem.address)) {
+                console.log("Found pubkey of item...");
+                let isSigGenuine = await zenzo.call("verifymessage", nItem.address, nItem.sig, nItem.tx);
+                if (isSigGenuine) {
+                    console.info("Sig is genuine...")
+                    if (hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value) === nItem.hash) {
+                        console.info("Hash is genuine...")
+                        return true;
+                    } else {
+                        console.info("Hash is not genuine...")
+                        return false;
+                    }
+                } else {
+                    console.info("Sig is not genuine...")
+                    return false;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+async function validateItems () {
+    let validated = 0;
+    await asyncForEach(itemsToValidate, async (item) => {
+        let res = await isItemValid(item);
+        if (res) validated++;
+    });
+    return validated;
+}
+
+async function validateItemBatch (res, nItems) {
+    await asyncForEach(nItems, async (nItem) => {
+        // Check all values are valid
+        if (nItem.tx.length !== 64) return console.warn("Forge: Received invalid item, TX length is not 64.");
+        if (nItem.sig.length < 1) return console.warn("Forge: Received invalid signature, length is below 1.");
+        if (nItem.address.length !== 34) return console.warn("Forge: Received invalid address, length is not 34.");
+        if (nItem.name.length < 1) return console.warn("Forge: Received invalid name, length is below 1.");
+        if (nItem.value < 0.01) return console.warn("Forge: Received invalid item, value is below minimum.");
+        if (nItem.hash.length !== 64) return console.warn("Forge: Received invalid item, hash length is not 64.");
+
+        let valid = await isItemValid(nItem);
+        if (!valid) return console.error("Forge: Received item is not genuine, ignored.");
+        if (getItem(nItem.hash) === null) {
+            items.push(nItem);
+            console.info("New item received! (" + nItem.name + ") We have " + items.length + " items.");
+            res.send("Thanks!");
+        }
+    });
+}
+
+// Get an item object from our list by it's hash
+function getItem (itemArg) {
+    for(let i=0; i<items.length; i++) {
+        if (items[i].hash === itemArg) return items[i];
+    }
+    return null;
+}
+
+// Hash a string with x11
+function hash (txt) {
+    return x11.digest(txt);
+}
+
 // Setup Express server
 let app = express();
 app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Cleanse the IP of unimportant stuff
 function cleanIP (ip) {
@@ -90,6 +188,22 @@ class Peer {
             console.warn(`Unable to ping peer "${this.host}" --> ${err.message}`);
         });
     }
+
+    sendItems (itemz) {
+        return superagent
+        .post(this.host + "/forge/receive")
+        .send(itemz)
+        .then((res) => {
+            this.lastPing = Date.now();
+            this.setStale(false);
+            console.info(`Peer "${this.host}" (${this.index}) responded to items with "${res.text}".`);
+        })
+        .catch((err) => {
+            // Peer didn't respond, mark as stale
+            this.setStale(true);    
+            console.warn(`Unable to send items to peer "${this.host}" --> ${err.message}`);
+        });
+    }
 }
 
 
@@ -114,6 +228,51 @@ app.post('/ping', (req, res) => {
     res.send("Pong!");
 });
 
+// Forge Receive
+// Allows peers to send us their Forge item data
+app.post('/forge/receive', (req, res) => {
+    let ip = cleanIP(req.ip);
+
+    let nItems = req.body;
+
+    validateItemBatch(res, nItems).then(ress => {
+        console.log('Forge: Validated item batch from "' + ip + '"');
+    })
+});
+
+/* LOCAL-ONLY ENDPOINTS (Cannot be used by peers, only us)*/
+// Forge Create
+// The endpoint for crafting new items, backed by ZNZ and validated by the ZENZO Core protocol
+app.post('/forge/create', (req, res) => {
+    let ip = cleanIP(req.ip);
+    if (!isAuthed(req)) return console.warn("Forge: A non-authorized Forge was made by '" + ip + "', ignoring.");
+
+    // Check we have all needed parameters
+    if (req.body.amount < 0.01) return console.warn("Forge: Invalid amount parameter.");
+    if (req.body.name.length < 1) return console.warn("Forge: Invalid name parameter.");
+
+    // Cleanse the input
+    req.body.amount = Number(req.body.amount);
+
+    // Create a transaction
+    zenzo.call("sendtoaddress", addy, Number(req.body.amount.toFixed(8))).then(txid => {
+        // Sign the transaction hash
+        zenzo.call("signmessage", addy, txid).then(sig => {
+            let nItem = {
+                tx: txid,
+                sig: sig,
+                address: addy,
+                name: req.body.name,
+                value: req.body.amount
+            }
+            nItem.hash = hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value);
+            console.log("Forge: Item Created!\n- TX: " + nItem.tx + "\n- Signature: " + nItem.sig + "\n- Name: " + nItem.name + "\n- Value: " + nItem.value + " ZNZ\n- Hash: " + nItem.hash);
+            items.push(nItem);
+            itemsToValidate.push(nItem);
+        }).catch(console.error);
+    }).catch(console.error);
+});
+
 app.listen(80);
 
 
@@ -125,9 +284,25 @@ for(let i=0; i<seednodes.length; i++) {
     seednode.connect(true);
 }
 
-// Second, start the "peer janitor" loop to clean out stale peers and ping our active peers at regular intervals.
+// Start the "peer janitor" loop to clean out stale peers and ping our active peers at regular intervals.
 let peerJanitor = setInterval(function() {
     peers.forEach(peer => {
         peer.ping();
     });
+
+    if (itemsToValidate.length > 0) {
+        validateItems().then(validated => {
+            console.log("Validated " + validated + " item(s).")
+            if (itemsToValidate.length === validated) {
+                peers.forEach(peer => {
+                    peer.sendItems(itemsToValidate);
+                });
+            }
+        });
+    }
 }, 15000);
+
+// Setup the wallet RPC
+const rpcAuth = {user: "user", pass: "pass", port: 26211};
+const addy = "";
+let zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
