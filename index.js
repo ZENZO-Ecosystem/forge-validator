@@ -1,3 +1,4 @@
+const fs = require('fs');
 const superagent = require('superagent');
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -62,16 +63,16 @@ async function isItemValid (nItem) {
                 console.log("Found pubkey of item...");
                 let isSigGenuine = await zenzo.call("verifymessage", nItem.address, nItem.sig, nItem.tx);
                 if (isSigGenuine) {
-                    console.info("Sig is genuine...")
+                    console.info("Sig is genuine...");
                     if (hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value) === nItem.hash) {
-                        console.info("Hash is genuine...")
+                        console.info("Hash is genuine...");
                         return true;
                     } else {
-                        console.info("Hash is not genuine...")
+                        console.info("Hash is not genuine...");
                         return false;
                     }
                 } else {
-                    console.info("Sig is not genuine...")
+                    console.info("Sig is not genuine...");
                     return false;
                 }
             }
@@ -276,30 +277,83 @@ app.post('/forge/create', (req, res) => {
 app.listen(80);
 
 
+/* ------------------ I/O Operations ------------------ */
+
+// Write data to a specified file
+async function toDisk (file, data, isJson) {
+    if (isJson) data = JSON.stringify(data);
+    await fs.writeFileSync('data/' + file, data);
+    return true;
+}
+
+// Read data from a specified file
+async function fromDisk (file, isJson) {
+    if (!fs.existsSync('data/' + file)) return null;
+    let data = await fs.readFileSync('data/' + file, "utf8");
+    if (isJson) data = JSON.parse(data);
+    return data;
+}
+
+
 /* Core Node Mechanics */
 // First! Let's bootstrap the validator with seednodes
 const seednodes = ["45.12.32.114"];
-for(let i=0; i<seednodes.length; i++) {
+for (let i=0; i<seednodes.length; i++) {
     let seednode = new Peer(seednodes[i]);
     seednode.connect(true);
 }
 
-// Start the "peer janitor" loop to clean out stale peers and ping our active peers at regular intervals.
-let peerJanitor = setInterval(function() {
+// Load all relevent data from disk (if it already exists)
+// Item data
+if (!fs.existsSync('data/')) {
+    console.warn("Init: dir 'data/' doesn't exist, creating new directory...");
+    fs.mkdirSync('data');
+} else {
+    console.info("Init: loading previous data from disk...");
+    fromDisk("items.json", true).then(nDiskItems => {
+        if (nDiskItems === null)
+            console.warn("Init: file 'items.json' missing from disk, ignoring...");
+        else
+            items = nDiskItems;
+        
+        fromDisk("pending_items.json", true).then(nDiskPendingItems => {
+            if (nDiskPendingItems === null)
+                console.warn("Init: file 'pending_items.json' missing from disk, ignoring...");
+            else
+                itemsToValidate = nDiskPendingItems;
+
+            console.info("Init: loaded from disk:\n- Items: " + items.length + "\n- Pending Items: " + itemsToValidate.length);
+        });
+    });
+}
+
+// Start the "janitor" loop to ping peers, validate items and save to disk at intervals
+let janitor = setInterval(function() {
+    // Ping peers
     peers.forEach(peer => {
         peer.ping();
     });
 
+    // Validate pending items
     if (itemsToValidate.length > 0) {
         validateItems().then(validated => {
             console.log("Validated " + validated + " item(s).")
             if (itemsToValidate.length === validated) {
                 peers.forEach(peer => {
                     peer.sendItems(itemsToValidate);
+                    itemsToValidate = [];
                 });
             }
         });
     }
+
+    // Save data to disk
+    toDisk("items.json", items, true).then(res => {
+        console.log('Database: Written ' + items.length + ' items to disk.');
+        toDisk("pending_items.json", itemsToValidate, true).then(res => {
+            console.log('Database: Written ' + itemsToValidate.length + ' pending items to disk.');
+        });
+    });
 }, 15000);
 
 // Setup the wallet RPC
