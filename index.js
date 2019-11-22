@@ -52,31 +52,37 @@ async function asyncForEach(array, callback) {
 
 // Validates if an item is genuine
 async function isItemValid (nItem) {
-    let rawTx = await zenzo.call("getrawtransaction", nItem.tx, 1);
-    if (!rawTx || !rawTx.vout || !rawTx.vout[0]) {
-        console.warn('Forge: Item "' + nItem.name + '" is not in the blockchain.');
-        return false;
-    }
-    for (let i=0; i<rawTx.vout.length; i++) {
-        if (rawTx.vout[i].value === nItem.value) {
-            if (rawTx.vout[i].scriptPubKey.addresses.includes(nItem.address)) {
-                console.log("Found pubkey of item...");
-                let isSigGenuine = await zenzo.call("verifymessage", nItem.address, nItem.sig, nItem.tx);
-                if (isSigGenuine) {
-                    console.info("Sig is genuine...");
-                    if (hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value) === nItem.hash) {
-                        console.info("Hash is genuine...");
-                        return true;
+    try {
+        console.info("getrawtransaction " + nItem.tx + " 1");
+        let rawTx = await zenzo.call("getrawtransaction", nItem.tx, 1);
+        if (!rawTx || !rawTx.vout || !rawTx.vout[0]) {
+            console.warn('Forge: Item "' + nItem.name + '" is not in the blockchain.');
+            return false;
+        }
+        for (let i=0; i<rawTx.vout.length; i++) {
+            if (rawTx.vout[i].value === nItem.value) {
+                if (rawTx.vout[i].scriptPubKey.addresses.includes(nItem.address)) {
+                    console.log("Found pubkey of item...");
+                    let isSigGenuine = await zenzo.call("verifymessage", nItem.address, nItem.sig, nItem.tx);
+                    if (isSigGenuine) {
+                        console.info("Sig is genuine...");
+                        if (hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value) === nItem.hash) {
+                            console.info("Hash is genuine...");
+                            return true;
+                        } else {
+                            console.info("Hash is not genuine...");
+                            return false;
+                        }
                     } else {
-                        console.info("Hash is not genuine...");
+                        console.info("Sig is not genuine...");
                         return false;
                     }
-                } else {
-                    console.info("Sig is not genuine...");
-                    return false;
                 }
             }
         }
+    } catch (err) {
+        console.error("Item Validation error: " + err);
+        return false;
     }
     return false;
 }
@@ -397,7 +403,13 @@ let janitor = setInterval(function() {
     });
 }, 15000);
 
-// Setup the wallet RPC
-const rpcAuth = {user: "user", pass: "pass", port: 26211};
-const addy = "";
-let zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
+// Setup the wallet variables
+let addy = "";
+let zenzo = null;
+
+// Load variables from disk config
+fromDisk("config.json", true).then(config => {
+    let rpcAuth = {user: config.wallet.user, pass: config.wallet.pass, port: config.wallet.port};
+    addy = config.wallet.address;
+    zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
+});

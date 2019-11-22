@@ -1,0 +1,8 @@
+{
+    "wallet": {
+        "user": "wallet_username",
+        "pass": "wallet_password",
+        "port": 26211,
+        "address": "Zuk1TyZtoK...."
+    }
+}
