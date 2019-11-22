@@ -90,7 +90,7 @@ async function validateItems () {
     return validated;
 }
 
-async function validateItemBatch (res, nItems) {
+async function validateItemBatch (res, nItems, reply) {
     await asyncForEach(nItems, async (nItem) => {
         // Check all values are valid
         if (nItem.tx.length !== 64) return console.warn("Forge: Received invalid item, TX length is not 64.");
@@ -105,9 +105,10 @@ async function validateItemBatch (res, nItems) {
         if (getItem(nItem.hash) === null) {
             items.push(nItem);
             console.info("New item received! (" + nItem.name + ") We have " + items.length + " items.");
-            res.send("Thanks!");
+            if (reply) res.send("Thanks!");
         }
     });
+    return true;
 }
 
 // Get an item object from our list by it's hash
@@ -163,7 +164,8 @@ class Peer {
                     this.lastPing = Date.now();
                     this.setStale(false);
                     peers.push(this);
-                    console.info(`Peer "${this.host}" (${this.index}) responded to ping, appended to peers list!`);
+                    console.info(`Peer "${this.host}" (${this.index}) responded to ping, appended to peers list!\n- Starting item Sync with peer.`);
+                    this.getItems();
                 })
                 .catch((err) => {
                     // Peer didn't respond, don't add to peers list
@@ -205,6 +207,27 @@ class Peer {
             console.warn(`Unable to send items to peer "${this.host}" --> ${err.message}`);
         });
     }
+
+    getItems () {
+        return superagent
+        .post(this.host + "/forge/sync")
+        .send((items.length + itemsToValidate.length).toString())
+        .then((res) => {
+            // Peer sent items, scan through them and merge lists if necessary
+            this.lastPing = Date.now();
+            this.setStale(false);
+            let data = JSON.parse(res.text);
+            console.info(`Peer "${this.host}" (${this.index}) sent items (${data.items.length} Items, ${data.pendingItems.length} Pending Items)`);
+            validateItemBatch(null, data.items.concat(data.pendingItems), false).then(done => {
+                if (done) {
+                    console.info(`Synced with peer "${this.host}", we now have ${items.length} valid & ${itemsToValidate.length} pending items!`);
+                } else console.warn(`Failed to sync with peer "${this.host}"`);
+            });
+        })
+        .catch((err) => {
+            console.warn(`Unable to get items from peer "${this.host}" --> ${err.message}`);
+        });
+    }
 }
 
 
@@ -236,10 +259,26 @@ app.post('/forge/receive', (req, res) => {
 
     let nItems = req.body;
 
-    validateItemBatch(res, nItems).then(ress => {
+    validateItemBatch(res, nItems, true).then(ress => {
         console.log('Forge: Validated item batch from "' + ip + '"');
-    })
+    });
 });
+
+// Forge Sync
+// Allows peers to sync with our database
+app.post('/forge/sync', (req, res) => {
+    let ip = cleanIP(req.ip);
+
+    // Check if they have more items than us, if so, ask for them
+    if (Number(req.body) > (items.length + itemsToValidate.length)) {
+        req.peer = getPeer("http://" + ip);
+        req.peer.getItems();
+    }
+
+    let obj = {items: items, pendingItems: itemsToValidate};
+    res.send(JSON.stringify(obj));
+});
+
 
 /* LOCAL-ONLY ENDPOINTS (Cannot be used by peers, only us)*/
 // Forge Create
@@ -270,6 +309,7 @@ app.post('/forge/create', (req, res) => {
             console.log("Forge: Item Created!\n- TX: " + nItem.tx + "\n- Signature: " + nItem.sig + "\n- Name: " + nItem.name + "\n- Value: " + nItem.value + " ZNZ\n- Hash: " + nItem.hash);
             items.push(nItem);
             itemsToValidate.push(nItem);
+            res.json(nItem);
         }).catch(console.error);
     }).catch(console.error);
 });
@@ -332,6 +372,7 @@ let janitor = setInterval(function() {
     // Ping peers
     peers.forEach(peer => {
         peer.ping();
+        peer.getItems(); // Temp, will be optimized later
     });
 
     // Validate pending items
