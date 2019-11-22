@@ -320,6 +320,13 @@ app.post('/forge/create', (req, res) => {
     }).catch(console.error);
 });
 
+// Forge Items
+// The endpoint for getting a list of validated and pending items
+app.post('/forge/items', (req, res) => {
+    let obj = {items: items, pendingItems: itemsToValidate};
+    res.json(obj);
+});
+
 app.listen(80);
 
 
