@@ -78,10 +78,17 @@ async function isItemValid (nItem) {
                             console.info("Hash is genuine...");
                             let res = await superagent.get(explorer + 'api/v2/utxo/' + nItem.address + "?confirmed=false");
                             res = JSON.parse(res.text);
-                            if (res.length === 0) return false; // UTXO has been spent
-                            for (let i=0; i<res.length; i++) {
-                                if (res[i].txid === nItem.tx) return true; // Found unspent collateral UTXO
+                            if (res.length === 0) {
+                                console.warn("UTXO couldn't be found, address '" + nItem.address + "' has no UTXOs");
+                                return false; // UTXO has been spent
                             }
+                            for (let i=0; i<res.length; i++) {
+                                if (res[i].txid === nItem.tx) {
+                                    console.warn("Found unspent UTXO collateral...");
+                                    return true; // Found unspent collateral UTXO
+                                }
+                            }
+                            console.warn("UTXO couldn't be found, address '" + nItem.address + "' does not have a collateral UTXO");
                             return false; // Couldn't find unspent collateral UTXO
                         } else {
                             console.info("Hash is not genuine...");
