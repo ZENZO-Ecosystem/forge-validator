@@ -301,6 +301,26 @@ app.post('/forge/sync', (req, res) => {
     res.send(JSON.stringify(obj));
 });
 
+// Forge Inventory
+// An endpoint that allows peers to see our personal inventory. Item owned and/or created by us.
+app.post('/forge/inventory', (req, res) => {
+    let ourItems = [];
+    let ourPendingItems = [];
+
+    // Find our validated items
+    for (let i=0; i<items; i++) {
+        if (items[i].address === addy) ourItems.push(items[i]);
+    }
+
+    // Find our pending items (Mempool items, these can be optionally included in fast-paced games)
+    for (let i=0; i<pendingItems; i++) {
+        if (pendingItems[i].address === addy) ourPendingItems.push(pendingItems[i]);
+    }
+
+    let obj = {items: ourItems, pendingItems: ourPendingItems};
+    res.send(JSON.stringify(obj));
+});
+
 
 /* LOCAL-ONLY ENDPOINTS (Cannot be used by peers, only us)*/
 // Forge Create
