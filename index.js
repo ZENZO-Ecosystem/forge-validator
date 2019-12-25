@@ -311,12 +311,12 @@ app.post('/forge/inventory', (req, res) => {
     let ourPendingItems = [];
 
     // Find our validated items
-    for (let i=0; i<items; i++) {
+    for (let i=0; i<items.length; i++) {
         if (items[i].address === addy) ourItems.push(items[i]);
     }
 
     // Find our pending items (Mempool items, these can be optionally included in fast-paced games)
-    for (let i=0; i<itemsToValidate; i++) {
+    for (let i=0; i<itemsToValidate.length; i++) {
         if (itemsToValidate[i].address === addy) ourPendingItems.push(itemsToValidate[i]);
     }
 
@@ -439,6 +439,11 @@ let janitor = setInterval(function() {
             }
         });
     }
+
+    // Send our validated items to peers
+    peers.forEach(peer => {
+        peer.sendItems(items); // Temp, will be optimized later
+    });
 
     // Save data to disk
     toDisk("items.json", items, true).then(res => {
