@@ -108,11 +108,23 @@ async function isItemValid (nItem) {
     return false;
 }
 
-async function validateItems () {
+async function validateItems (revalidate = false) {
     let validated = 0;
-    await asyncForEach(itemsToValidate, async (item) => {
+    await asyncForEach(((revalidate) ? items : itemsToValidate), async (item) => {
         let res = await isItemValid(item);
-        if (res) validated++;
+        if (res) {
+            validated++;
+        } else {
+            for (let i=0; i<items.length; i++) {
+                if (items[i].tx === item.tx) {
+                    items.splice(i, 1); // Erase invalid item from our list
+                    console.warn("Erased bad item! (" + item.name + " - " + item.tx + ")");
+                }
+            }
+            for (let i=0; i<itemsToValidate.length; i++) {
+                if (itemsToValidate[i].tx === item.tx) itemsToValidate.splice(i, 1); // Erase invalid item from our pending list
+            }
+        }
     });
     return validated;
 }
@@ -129,10 +141,7 @@ async function validateItemBatch (res, nItems, reply) {
 
         let valid = await isItemValid(nItem);
         if (!valid) {
-            for (let i=0; i<items.length; i++) {
-                if (items[i].tx === nItem.tx) items.splice(i, 1); // Erase invalid item from our list
-            }
-            return console.error("Forge: Received item is not genuine, ignored. (Item has been erased from our valid list)");
+            return console.error("Forge: Received item is not genuine, ignored.");
         }
         if (getItem(nItem.hash) === null) {
             items.push(nItem);
@@ -448,9 +457,16 @@ let janitor = setInterval(function() {
     }
 
     // Send our validated items to peers
-    peers.forEach(peer => {
-        peer.sendItems(items); // Temp, will be optimized later
-    });
+    if (items.length > 0) {
+        validateItems(true).then(validated => {
+            console.log("Revalidated " + validated + " item(s).")
+            if (items.length === validated) {
+                peers.forEach(peer => {
+                    peer.sendItems(items); // Temp, will be optimized later
+                });
+            }
+        });
+    }
 
     // Save data to disk
     toDisk("items.json", items, true).then(res => {
