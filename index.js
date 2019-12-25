@@ -6,6 +6,9 @@ const RPC = require('bitcoin-rpc-promise');
 const nanoid = require('nanoid');
 const x11 = require('x11-hash-js');
 
+// TEMP EXPLORER FIX, INSECURE!
+process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
+
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
 let peers = [];
