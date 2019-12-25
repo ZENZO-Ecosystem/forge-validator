@@ -13,7 +13,12 @@ let peers = [];
 // The list of all known items on the Forge network
 let items = [];
 
+// The list of "pending" items, of which require further validations
 let itemsToValidate = [];
+
+// The explorer API to use for checking if a UTXO is spent (CENTRALIZED)
+/* This will eventually be replaced by a home-made system that saves a slimmed UTXO tree on-disk to trustlessly validate the on-chain item collateral */
+let explorer = "";
 
 // Get a peer object from our list by it's host or index
 function getPeer (peerArg) {
@@ -68,7 +73,13 @@ async function isItemValid (nItem) {
                         console.info("Sig is genuine...");
                         if (hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value) === nItem.hash) {
                             console.info("Hash is genuine...");
-                            return true;
+                            let res = await superagent.get(explorer + 'api/v2/utxo/' + nItem.address + "?confirmed=false");
+                            res = JSON.parse(res.text);
+                            if (res.length === 0) return false; // UTXO has been spent
+                            for (let i=0; i<res.length; i++) {
+                                if (res[i].txid === nItem.tx) return true; // Found unspent collateral UTXO
+                            }
+                            return false; // Couldn't find unspent collateral UTXO
                         } else {
                             console.info("Hash is not genuine...");
                             return false;
@@ -107,7 +118,12 @@ async function validateItemBatch (res, nItems, reply) {
         if (nItem.hash.length !== 64) return console.warn("Forge: Received invalid item, hash length is not 64.");
 
         let valid = await isItemValid(nItem);
-        if (!valid) return console.error("Forge: Received item is not genuine, ignored.");
+        if (!valid) {
+            for (let i=0; i<items.length; i++) {
+                if (items[i].tx === nItem.tx) items.splice(i, 1); // Erase invalid item from our list
+            }
+            return console.error("Forge: Received item is not genuine, ignored. (Item has been erased from our valid list)");
+        }
         if (getItem(nItem.hash) === null) {
             items.push(nItem);
             console.info("New item received! (" + nItem.name + ") We have " + items.length + " items.");
@@ -419,4 +435,5 @@ fromDisk("config.json", true).then(config => {
     let rpcAuth = {user: config.wallet.user, pass: config.wallet.pass, port: config.wallet.port};
     addy = config.wallet.address;
     zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
+    explorer = config.blockbook;
 });
