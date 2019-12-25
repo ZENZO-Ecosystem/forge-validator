@@ -316,8 +316,8 @@ app.post('/forge/inventory', (req, res) => {
     }
 
     // Find our pending items (Mempool items, these can be optionally included in fast-paced games)
-    for (let i=0; i<pendingItems; i++) {
-        if (pendingItems[i].address === addy) ourPendingItems.push(pendingItems[i]);
+    for (let i=0; i<itemsToValidate; i++) {
+        if (itemsToValidate[i].address === addy) ourPendingItems.push(itemsToValidate[i]);
     }
 
     let obj = {items: ourItems, pendingItems: ourPendingItems};
