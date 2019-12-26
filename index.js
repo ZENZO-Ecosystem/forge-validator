@@ -9,6 +9,9 @@ const x11 = require('x11-hash-js');
 // TEMP EXPLORER FIX, INSECURE!
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
 
+// System Application Data directory
+var appdata = process.env.APPDATA.replace(/\\/g,'/') + "/forge/" || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local').replace(/\\/g,'/') + "/forge/";
+
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
 let peers = [];
@@ -390,14 +393,14 @@ app.listen(80);
 // Write data to a specified file
 async function toDisk (file, data, isJson) {
     if (isJson) data = JSON.stringify(data);
-    await fs.writeFileSync('data/' + file, data);
+    await fs.writeFileSync(appdata + 'data/' + file, data);
     return true;
 }
 
 // Read data from a specified file
 async function fromDisk (file, isJson) {
-    if (!fs.existsSync('data/' + file)) return null;
-    let data = await fs.readFileSync('data/' + file, "utf8");
+    if (!fs.existsSync(appdata + 'data/' + file)) return null;
+    let data = await fs.readFileSync(appdata + 'data/' + file, "utf8");
     if (isJson) data = JSON.parse(data);
     return data;
 }
@@ -413,9 +416,10 @@ for (let i=0; i<seednodes.length; i++) {
 
 // Load all relevent data from disk (if it already exists)
 // Item data
-if (!fs.existsSync('data/')) {
+if (!fs.existsSync(appdata + 'data/')) {
     console.warn("Init: dir 'data/' doesn't exist, creating new directory...");
-    fs.mkdirSync('data');
+    fs.mkdirSync(appdata + 'data');
+    console.info("Created data directory at '" + appdata + "data/" + "'");
 } else {
     console.info("Init: loading previous data from disk...");
     fromDisk("items.json", true).then(nDiskItems => {
@@ -487,4 +491,10 @@ fromDisk("config.json", true).then(config => {
     addy = config.wallet.address;
     zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
     explorer = config.blockbook;
+});
+
+// Save our AuthKey to disk to allow other applications to access the user's Forge node during private actions
+/* This is insecure, and will be revamped in the future to have a permission-based system, instead of private key based */
+toDisk("auth.key", authToken, false).then(res => {
+    console.log('Database: Written AuthKey to disk.');
 });
