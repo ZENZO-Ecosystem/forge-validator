@@ -10,7 +10,8 @@ const x11 = require('x11-hash-js');
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
 
 // System Application Data directory
-var appdata = process.env.APPDATA.replace(/\\/g,'/') + "/forge/" || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local').replace(/\\/g,'/') + "/forge/";
+let appdata = process.env.APPDATA + "/forge/" || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local') + "/forge/";
+appdata = appdata.replace(/\\/g,'/');
 
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
