@@ -10,8 +10,8 @@ const x11 = require('x11-hash-js');
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
 
 // System Application Data directory
-let appdata = process.env.APPDATA + "/forge/" || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local') + "/forge/";
-appdata = appdata.replace(/\\/g,'/');
+let appdata = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local');
+appdata = appdata.replace(/\\/g,'/') + '/forge/';
 
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
@@ -83,7 +83,6 @@ async function isItemValid (nItem) {
                             let res = await superagent.get(explorer + 'api/v2/utxo/' + nItem.address + "?confirmed=false");
                             res = JSON.parse(res.text);
                             if (res.length === 0) {
-                                console.warn("UTXO couldn't be found, address '" + nItem.address + "' has no UTXOs");
                                 console.warn("UTXO couldn't be found, item '" + nItem.name + "' has no UTXOs");
                                 return false; // UTXO has been spent
                             }
@@ -93,7 +92,6 @@ async function isItemValid (nItem) {
                                     return true; // Found unspent collateral UTXO
                                 }
                             }
-                            console.warn("UTXO couldn't be found, address '" + nItem.address + "' does not have a collateral UTXO");
                             console.warn("UTXO couldn't be found, item '" + nItem.name + "' does not have a collateral UTXO");
                             return false; // Couldn't find unspent collateral UTXO
                         } else {
