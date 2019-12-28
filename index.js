@@ -432,7 +432,8 @@ for (let i=0; i<seednodes.length; i++) {
 // Item data
 if (!fs.existsSync(appdata + 'data/')) {
     console.warn("Init: dir 'data/' doesn't exist, creating new directory...");
-    fs.mkdirSync(appdata + 'data');
+    fs.mkdirSync(appdata); /* /forge */
+    fs.mkdirSync(appdata + 'data'); /* /forge/data */
     console.info("Created data directory at '" + appdata + "data/" + "'");
 } else {
     console.info("Init: loading previous data from disk...");
