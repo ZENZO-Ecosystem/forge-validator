@@ -83,6 +83,7 @@ async function isItemValid (nItem) {
                             res = JSON.parse(res.text);
                             if (res.length === 0) {
                                 console.warn("UTXO couldn't be found, address '" + nItem.address + "' has no UTXOs");
+                                console.warn("UTXO couldn't be found, item '" + nItem.name + "' has no UTXOs");
                                 return false; // UTXO has been spent
                             }
                             for (let i=0; i<res.length; i++) {
@@ -92,6 +93,7 @@ async function isItemValid (nItem) {
                                 }
                             }
                             console.warn("UTXO couldn't be found, address '" + nItem.address + "' does not have a collateral UTXO");
+                            console.warn("UTXO couldn't be found, item '" + nItem.name + "' does not have a collateral UTXO");
                             return false; // Couldn't find unspent collateral UTXO
                         } else {
                             console.info("Hash is not genuine...");
@@ -123,9 +125,6 @@ async function validateItems (revalidate = false) {
                     items.splice(i, 1); // Erase invalid item from our list
                     console.warn("Erased bad item! (" + item.name + " - " + item.tx + ")");
                 }
-            }
-            for (let i=0; i<itemsToValidate.length; i++) {
-                if (itemsToValidate[i].tx === item.tx) itemsToValidate.splice(i, 1); // Erase invalid item from our pending list
             }
         }
     });
@@ -280,18 +279,22 @@ class Peer {
 // An easy way to check if a node is online and responsive
 app.post('/ping', (req, res) => {
     let ip = cleanIP(req.ip);
-    req.peer = getPeer("http://" + ip);
-    if (req.peer !== null) {
+
+    // We don't want to connect to ourselves
+    if (ip !== "127.0.0.1") {
         req.peer = getPeer("http://" + ip);
-        req.peer.setStale(false);
-        req.peer.lastPing = Date.now();
-        updatePeer(req.peer);
-    } else {
-        req.peer = new Peer(ip);
-        req.peer.lastPing = Date.now();
-        req.peer.connect(false);
+        if (req.peer !== null) {
+            req.peer = getPeer("http://" + ip);
+            req.peer.setStale(false);
+            req.peer.lastPing = Date.now();
+            updatePeer(req.peer);
+        } else {
+            req.peer = new Peer(ip);
+            req.peer.lastPing = Date.now();
+            req.peer.connect(false);
+        }
+        console.info('Received ping from "' + ip + '" (' + req.peer.index + ')');
     }
-    console.info('Received ping from "' + ip + '" (' + req.peer.index + ')');
     
     res.send("Pong!");
 });
@@ -345,6 +348,19 @@ app.post('/forge/inventory', (req, res) => {
 
 
 /* LOCAL-ONLY ENDPOINTS (Cannot be used by peers, only us)*/
+
+// Forge Account
+// The endpoint for getting the general information of a user
+app.post('/forge/account', (req, res) => {
+    let ip = cleanIP(req.ip);
+    if (!isAuthed(req)) return console.warn("Forge: A non-authorized Forge was made by '" + ip + "', ignoring.");
+
+    zenzo.call("getinfo").then(info => {
+        let obj = {forge_address: addy, balance: info.balance, wallet_version: info.version};
+        res.json(obj);
+    })
+});
+
 // Forge Create
 // The endpoint for crafting new items, backed by ZNZ and validated by the ZENZO Core protocol
 app.post('/forge/create', (req, res) => {
@@ -371,7 +387,6 @@ app.post('/forge/create', (req, res) => {
             }
             nItem.hash = hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value);
             console.log("Forge: Item Created!\n- TX: " + nItem.tx + "\n- Signature: " + nItem.sig + "\n- Name: " + nItem.name + "\n- Value: " + nItem.value + " ZNZ\n- Hash: " + nItem.hash);
-            items.push(nItem);
             itemsToValidate.push(nItem);
             res.json(nItem);
         }).catch(console.error);
