@@ -422,7 +422,7 @@ async function fromDisk (file, isJson) {
 
 /* Core Node Mechanics */
 // First! Let's bootstrap the validator with seednodes
-const seednodes = ["45.12.32.114"];
+const seednodes = ["45.12.32.114", "144.91.87.251:8000"];
 for (let i=0; i<seednodes.length; i++) {
     let seednode = new Peer(seednodes[i]);
     seednode.connect(true);
@@ -500,12 +500,20 @@ let janitor = setInterval(function() {
 let addy = "";
 let zenzo = null;
 
+// Catch if the wallet RPC isn't available
+function rpcError() {
+    console.error("CRITICAL ERROR:\n - Unable to connect to ZENZO-RPC, please check config file and ZENZO Wallet availability.");
+}
+
 // Load variables from disk config
 fromDisk("config.json", true).then(config => {
     let rpcAuth = {user: config.wallet.user, pass: config.wallet.pass, port: config.wallet.port};
     addy = config.wallet.address;
     zenzo = new RPC('http://' + rpcAuth.user + ':' + rpcAuth.pass + '@localhost:' + rpcAuth.port);
     explorer = config.blockbook;
+    zenzo.call("help").then(msg => {
+        console.log("Connected to ZENZO-RPC successfully!");
+    }).catch(rpcError);
 });
 
 // Save our AuthKey to disk to allow other applications to access the user's Forge node during private actions
