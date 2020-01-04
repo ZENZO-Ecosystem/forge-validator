@@ -11,7 +11,7 @@ process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = 0;
 
 // System Application Data directory
 let appdata = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local');
-appdata = appdata.replace(/\\/g,'/') + '/forge/';
+appdata = appdata.replace(/\\/g, '/') + '/forge/';
 
 /* ------------------ NETWORK ------------------ */
 // The list of all known peers
@@ -29,7 +29,7 @@ let explorer = "";
 
 // Get a peer object from our list by it's host or index
 function getPeer (peerArg) {
-    for(let i=0; i<peers.length; i++) {
+    for (let i=0; i<peers.length; i++) {
         if (peers[i].host === peerArg || peers[i].index === peerArg) return peers[i];
     }
     return null;
@@ -37,7 +37,7 @@ function getPeer (peerArg) {
 
 // Updates the contents of a peer object
 function updatePeer (peerArg) {
-    for(let i=0; i<peers.length; i++) {
+    for (let i=0; i<peers.length; i++) {
         if (peers[i].host === peerArg.host || peers[i].index === peerArg.index) {
             peers[i] = peerArg;
             return true;
@@ -48,7 +48,7 @@ function updatePeer (peerArg) {
 
 
 const authToken = nanoid();
-console.info("PRIVATE: Your local auth token is '" +  authToken + "'");
+console.info("PRIVATE: Your local auth token is '" + authToken + "'");
 
 // Checks if a private HTTP request was authenticated
 function isAuthed (req) {
@@ -58,17 +58,18 @@ function isAuthed (req) {
 
 async function asyncForEach(array, callback) {
     for (let index = 0; index < array.length; index++) {
-      await callback(array[index], index, array);
+        await callback(array[index], index, array);
     }
 }
 
 // Validates if an item is genuine
-async function isItemValid (nItem) {
+async function isItemValid (nItem, approve = false) {
     try {
-        console.info("getrawtransaction " + nItem.tx + " 1");
         let rawTx = await zenzo.call("getrawtransaction", nItem.tx, 1);
         if (!rawTx || !rawTx.vout || !rawTx.vout[0]) {
             console.warn('Forge: Item "' + nItem.name + '" is not in the blockchain.');
+            disproveItem(nItem);
+            addInvalidationScore(nItem, 2);
             return false;
         }
         for (let i=0; i<rawTx.vout.length; i++) {
@@ -84,22 +85,31 @@ async function isItemValid (nItem) {
                             res = JSON.parse(res.text);
                             if (res.length === 0) {
                                 console.warn("UTXO couldn't be found, item '" + nItem.name + "' has no UTXOs");
+                                disproveItem(nItem);
+                                addInvalidationScore(nItem, 5);
                                 return false; // UTXO has been spent
                             }
                             for (let i=0; i<res.length; i++) {
                                 if (res[i].txid === nItem.tx) {
                                     console.warn("Found unspent UTXO collateral...");
+                                    if (approve) approveItem(nItem);
                                     return true; // Found unspent collateral UTXO
                                 }
                             }
                             console.warn("UTXO couldn't be found, item '" + nItem.name + "' does not have a collateral UTXO");
+                            disproveItem(nItem);
+                            addInvalidationScore(nItem, 5);
                             return false; // Couldn't find unspent collateral UTXO
                         } else {
                             console.info("Hash is not genuine...");
+                            disproveItem(nItem);
+                            addInvalidationScore(nItem, 12.5);
                             return false;
                         }
                     } else {
                         console.info("Sig is not genuine...");
+                        disproveItem(nItem);
+                        addInvalidationScore(nItem, 12.5);
                         return false;
                     }
                 }
@@ -115,7 +125,7 @@ async function isItemValid (nItem) {
 async function validateItems (revalidate = false) {
     let validated = 0;
     await asyncForEach(((revalidate) ? items : itemsToValidate), async (item) => {
-        let res = await isItemValid(item);
+        let res = await isItemValid(item, true);
         if (res) {
             validated++;
         } else {
@@ -140,29 +150,86 @@ async function validateItemBatch (res, nItems, reply) {
         if (nItem.value < 0.01) return console.warn("Forge: Received invalid item, value is below minimum.");
         if (nItem.hash.length !== 64) return console.warn("Forge: Received invalid item, hash length is not 64.");
 
-        let valid = await isItemValid(nItem);
+        let valid = await isItemValid(nItem, true);
         if (!valid) {
             return console.error("Forge: Received item is not genuine, ignored.");
         }
         if (getItem(nItem.hash) === null) {
-            items.push(nItem);
-            console.info("New item received! (" + nItem.name + ") We have " + items.length + " items.");
+            console.info("New item received from peer! (" + nItem.name + ") We have " + items.length + " items.");
             if (reply) res.send("Thanks!");
         }
     });
     return true;
 }
 
+// Approve an item as valid, moving it to the main items DB and removing it from the pending list
+function approveItem(item) {
+    for (let i=0; i<itemsToValidate.length; i++) {
+        if (item.tx === itemsToValidate[i].tx) {
+            items.push(item);
+            itemsToValidate.splice(i, 1);
+            console.info("An item has been approved!\n - Item '" + item.name + "' (" + item.tx + ") has been approved and appended as a verified item.");
+        }
+    }
+}
+
+// Disprove an item, moving it out of the main items DB and to the pending list
+function disproveItem(item) {
+    for (let i=0; i<items.length; i++) {
+        if (item.tx === items[i].tx) {
+            itemsToValidate.push(items[i]);
+            items.splice(i, 1);
+            console.info("An item has been disproved!\n - Item '" + item.name + "' (" + item.tx + ") has been removed as a verified item and is now pending.");
+        }
+    }
+}
+
+// Increments the invalidation score of an item, if this score reaches 25, the item is considered irreversibly invalid, and removed from the DB permanently
+function addInvalidationScore(item, score) {
+    for (let i=0; i<items.length; i++) {
+        if (item.tx === items[i].tx) {
+            if (!items[i].invalidScore) items[i].invalidScore = 0;
+            items[i].invalidScore += score;
+            item.invalidScore = items[i].invalidScore;
+            console.info("An invalidation score of '" + score + "' has been applied to '" + item.name + "', now totalling '" + items[i].invalidScore + "' invalidation score.");
+            if (item.invalidScore >= 25) {
+                items.splice(i, 1);
+                console.info(" - Item has been abandoned due to exceeding the invalidation score threshold.");
+            }
+        }
+    }
+    for (let i=0; i<itemsToValidate.length; i++) {
+        if (item.tx === itemsToValidate[i].tx) {
+            if (!itemsToValidate[i].invalidScore) itemsToValidate[i].invalidScore = 0;
+            itemsToValidate[i].invalidScore += score;
+            item.invalidScore = itemsToValidate[i].invalidScore;
+            console.info("An invalidation score of '" + score + "' has been applied to '" + item.name + "', now totalling '" + itemsToValidate[i].invalidScore + "' invalidation score.");
+            if (item.invalidScore >= 25) {
+                itemsToValidate.splice(i, 1);
+                console.info(" - Item has been abandoned due to exceeding the invalidation score threshold.");
+            }
+        }
+    }
+}
+
+// Cleans a list of items of their local-node data
+function cleanItems (itemList) {
+    for (let i=0; i<itemList.length; i++) {
+        delete itemList[i].invalidScore;
+    }
+    return itemList;
+}
+
 // Get an item object from our list by it's hash
-function getItem (itemArg) {
-    for(let i=0; i<items.length; i++) {
+function getItem(itemArg) {
+    for (let i=0; i<items.length; i++) {
         if (items[i].hash === itemArg) return items[i];
     }
     return null;
 }
 
 // Hash a string with x11
-function hash (txt) {
+function hash(txt) {
     return x11.digest(txt);
 }
 
@@ -172,103 +239,103 @@ app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Cleanse the IP of unimportant stuff
-function cleanIP (ip) {
+function cleanIP(ip) {
     return ip.replace(/::ffff:/g, "");
 }
 
 class Peer {
-    constructor (host) {
+    constructor(host) {
         this.host = "http://" + host; // The host (http URL) of the peer
         this.lastPing = 0; // The timestamp of the last succesful ping to this peer
         this.index = ((peers.length != 0) ? peers[peers.length - 1].index + 1 : 0); // The order in which we connected to this peer
         this.stale = false; // A peer is stale if they do not respond to our requests
     }
 
-    isStale () {
+    isStale() {
         return this.stale;
     }
 
-    setStale (bool) {
+    setStale(bool) {
         this.stale = bool;
     }
 
-    connect (shouldPing) {
+    connect(shouldPing) {
         if (getPeer(this.host) === null) {
             if (!shouldPing) {
                 peers.push(this);
                 return console.info(`Peer "${this.host}" (${this.index}) appended to peers list!`);
             } else {
                 return superagent
-                .post(this.host + "/ping")
-                .send("ping!")
-                .then((res) => {
-                    // Peer responded, add it to our list
-                    this.lastPing = Date.now();
-                    this.setStale(false);
-                    peers.push(this);
-                    console.info(`Peer "${this.host}" (${this.index}) responded to ping, appended to peers list!\n- Starting item Sync with peer.`);
-                    this.getItems();
-                })
-                .catch((err) => {
-                    // Peer didn't respond, don't add to peers list
-                    this.setStale(true);
-                    console.warn(`Unable to ping peer "${this.host}" --> ${err.message}`);
-                });
+                    .post(this.host + "/ping")
+                    .send("ping!")
+                    .then((res) => {
+                        // Peer responded, add it to our list
+                        this.lastPing = Date.now();
+                        this.setStale(false);
+                        peers.push(this);
+                        console.info(`Peer "${this.host}" (${this.index}) responded to ping, appended to peers list!\n- Starting item Sync with peer.`);
+                        this.getItems();
+                    })
+                    .catch((err) => {
+                        // Peer didn't respond, don't add to peers list
+                        this.setStale(true);
+                        console.warn(`Unable to ping peer "${this.host}" --> ${err.message}`);
+                    });
             }
         }
     }
 
-    ping () {
+    ping() {
         return superagent
-        .post(this.host + "/ping")
-        .send("ping!")
-        .then((res) => {
-            this.lastPing = Date.now();
-            this.setStale(false);
-            console.info(`Peer "${this.host}" (${this.index}) responded to ping.`);
-        })
-        .catch((err) => {
-            // Peer didn't respond, mark as stale
-            this.setStale(true);
-            console.warn(`Unable to ping peer "${this.host}" --> ${err.message}`);
-        });
-    }
-
-    sendItems (itemz) {
-        return superagent
-        .post(this.host + "/forge/receive")
-        .send(itemz)
-        .then((res) => {
-            this.lastPing = Date.now();
-            this.setStale(false);
-            console.info(`Peer "${this.host}" (${this.index}) responded to items with "${res.text}".`);
-        })
-        .catch((err) => {
-            // Peer didn't respond, mark as stale
-            this.setStale(true);    
-            console.warn(`Unable to send items to peer "${this.host}" --> ${err.message}`);
-        });
-    }
-
-    getItems () {
-        return superagent
-        .post(this.host + "/forge/sync")
-        .send((items.length + itemsToValidate.length).toString())
-        .then((res) => {
-            // Peer sent items, scan through them and merge lists if necessary
-            this.lastPing = Date.now();
-            this.setStale(false);
-            let data = JSON.parse(res.text);
-            console.info(`Peer "${this.host}" (${this.index}) sent items (${data.items.length} Items, ${data.pendingItems.length} Pending Items)`);
-            validateItemBatch(null, data.items.concat(data.pendingItems), false).then(done => {
-                if (done) {
-                    console.info(`Synced with peer "${this.host}", we now have ${items.length} valid & ${itemsToValidate.length} pending items!`);
-                } else console.warn(`Failed to sync with peer "${this.host}"`);
+            .post(this.host + "/ping")
+            .send("ping!")
+            .then((res) => {
+                this.lastPing = Date.now();
+                this.setStale(false);
+                console.info(`Peer "${this.host}" (${this.index}) responded to ping.`);
+            })
+            .catch((err) => {
+                // Peer didn't respond, mark as stale
+                this.setStale(true);
+                console.warn(`Unable to ping peer "${this.host}" --> ${err.message}`);
             });
-        })
-        .catch((err) => {
-            console.warn(`Unable to get items from peer "${this.host}" --> ${err.message}`);
-        });
+    }
+
+    sendItems(itemz) {
+        return superagent
+            .post(this.host + "/forge/receive")
+            .send(cleanItems(itemz))
+            .then((res) => {
+                this.lastPing = Date.now();
+                this.setStale(false);
+                console.info(`Peer "${this.host}" (${this.index}) responded to items with "${res.text}".`);
+            })
+            .catch((err) => {
+                // Peer didn't respond, mark as stale
+                this.setStale(true);
+                console.warn(`Unable to send items to peer "${this.host}" --> ${err.message}`);
+            });
+    }
+
+    getItems() {
+        return superagent
+            .post(this.host + "/forge/sync")
+            .send((items.length + itemsToValidate.length).toString())
+            .then((res) => {
+                // Peer sent items, scan through them and merge lists if necessary
+                this.lastPing = Date.now();
+                this.setStale(false);
+                let data = JSON.parse(res.text);
+                console.info(`Peer "${this.host}" (${this.index}) sent items (${data.items.length} Items, ${data.pendingItems.length} Pending Items)`);
+                validateItemBatch(null, cleanItems(data.items.concat(data.pendingItems)), false).then(done => {
+                    if (done) {
+                        console.info(`Synced with peer "${this.host}", we now have ${items.length} valid & ${itemsToValidate.length} pending items!`);
+                    } else console.warn(`Failed to sync with peer "${this.host}"`);
+                });
+            })
+            .catch((err) => {
+                console.warn(`Unable to get items from peer "${this.host}" --> ${err.message}`);
+            });
     }
 }
 
@@ -294,7 +361,7 @@ app.post('/ping', (req, res) => {
         }
         console.info('Received ping from "' + ip + '" (' + req.peer.index + ')');
     }
-    
+
     res.send("Pong!");
 });
 
@@ -387,7 +454,12 @@ app.post('/forge/create', (req, res) => {
             nItem.hash = hash(nItem.tx + nItem.sig + nItem.address + nItem.name + nItem.value);
             console.log("Forge: Item Created!\n- TX: " + nItem.tx + "\n- Signature: " + nItem.sig + "\n- Name: " + nItem.name + "\n- Value: " + nItem.value + " ZNZ\n- Hash: " + nItem.hash);
             itemsToValidate.push(nItem);
-            res.json(nItem);
+            zenzo.call("gettransaction", txid).then(rawtx => {
+                zenzo.call("lockunspent", false, [{"txid": txid, "vout": rawtx.details[0].vout}]).then(didLock => {
+                    if (didLock) console.info("- Item collateral was successfully locked in ZENZO Coin Control.");
+                    res.json(nItem);
+                }).catch(console.error);
+            }).catch(console.error);
         }).catch(console.error);
     }).catch(console.error);
 });
@@ -442,7 +514,6 @@ if (!fs.existsSync(appdata + 'data/')) {
             console.warn("Init: file 'items.json' missing from disk, ignoring...");
         else
             items = nDiskItems;
-        
         fromDisk("pending_items.json", true).then(nDiskPendingItems => {
             if (nDiskPendingItems === null)
                 console.warn("Init: file 'pending_items.json' missing from disk, ignoring...");
@@ -503,6 +574,7 @@ let zenzo = null;
 // Catch if the wallet RPC isn't available
 function rpcError() {
     console.error("CRITICAL ERROR:\n - Unable to connect to ZENZO-RPC, please check config file and ZENZO Wallet availability.");
+    process.exit();
 }
 
 // Load variables from disk config
