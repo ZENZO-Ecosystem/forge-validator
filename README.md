@@ -1,3 +1,17 @@
+# DEPRECATED - The Forge Validator node has been merged with the Forge GUI into a single repo
+
+Visit the **ZENZO Forge** repository for the new Forge repository:
+
+https://github.com/ZENZO-Ecosystem/zenzo-forge
+
+.
+
+.
+
+.
+
+.
+
 # forge-validator
 The Source of the Decentralized ZENZO Forge Validator Node
 
